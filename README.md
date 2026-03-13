@@ -38,25 +38,41 @@ For secure deployment on platforms like Render or Railway, you must use environm
 python Gold_Bot.py
 ```
 
-## GitHub Updates
+## GitHub Push Process
 
-To push your local changes to GitHub, use the following commands in your terminal:
+Agar aap ne naya code update kiya hai ya pehli baar push kar rahe hain, to niche diye gaye steps follow karein:
 
-1. **Stage your changes**:
-   ```bash
-   git add .
-   ```
-2. **Commit your changes**:
-   ```bash
-   git commit -m "Describe your changes here"
-   ```
-3. **Push to GitHub**:
-   ```bash
-   git push origin main
-   ```
-   - git add .
-   - git commit -m Update
-   - git push
+### 1. Pehli Baar Push Karne Ke Liye (Initial Setup)
+Agar aap ne abhi tak GitHub par repo connect nahi ki:
+```bash
+git init
+git remote add origin <Aapka_GitHub_Repo_URL>
+git branch -M main
+git add .
+git commit -m "Initial commit"
+git push -u origin main
+```
+
+### 2. Har Baar New Changes Push Karne Ke Liye
+Jab bhi aap code mein koi tabdeeli (change) karein:
+```bash
+# 1. Saari files stage karein
+git add .
+
+# 2. Change ko commit karein (aik chota message likhein)
+git commit -m "Update: New changes"
+
+# 3. GitHub par push karein
+git push origin main
+```
+
+### 3. Agar Error Aaye (Conflict)
+Agar GitHub par code aapke local code se advanced hai:
+```bash
+git pull origin main
+# Conflicts resolve karein agar hon, phir push karein
+git push origin main
+```
 
 ## Common Git Issues & Solutions
 
