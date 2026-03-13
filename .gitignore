@@ -1,0 +1,20 @@
+# Python standard
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+pip-selfcheck.json
+
+# Environment variables
+.env
+
+# API Tokens and Credentials
+*-firebase-adminsdk-*.json
+*Tiingo API Token*.txt
+
+# IDE-specific
+.idea/
+.vscode/
