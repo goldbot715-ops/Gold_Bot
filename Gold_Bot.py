@@ -350,10 +350,12 @@ class GoldTradingBot:
     def _check_tp_sl(self, current_price):
         if not self.active_signal: return
         signal_data = self.active_signal; tp_hit, sl_hit = False, False
-        if signal_data['type'] == "Buy":
+        signal_type = signal_data.get('type', '')
+        
+        if "Buy" in signal_type:
             if current_price >= signal_data['tp']: tp_hit = True
             elif current_price <= signal_data['sl']: sl_hit = True
-        elif signal_data['type'] == "Sell":
+        elif "Sell" in signal_type:
             if current_price <= signal_data['tp']: tp_hit = True
             elif current_price >= signal_data['sl']: sl_hit = True
         
@@ -576,7 +578,7 @@ class GoldTradingBot:
         except Exception as e: print(f"{Fore.RED}Error updating signal: {e}")
 
     def _display_signal(self, signal_data, current_price):
-        signal_type = signal_data['type']; color = Fore.GREEN if signal_type == "Buy" else Fore.RED
+        signal_type = signal_data['type']; color = Fore.GREEN if "Buy" in signal_type else Fore.RED
         print(f"\n{Fore.MAGENTA}{'='*40}\n{color}NEW SIGNAL: {signal_type} | {self._format_symbol_for_display(self.symbol)}\n{Fore.CYAN}Condition: {signal_data['condition']}\n{Fore.YELLOW}Entry: {signal_data['entry_price']:.5f}\n{Fore.GREEN}TP: {signal_data['tp']:.5f}\n{Fore.RED}SL: {signal_data['sl']:.5f}\n{Fore.BLUE}Live: {current_price:.5f}\n{Fore.MAGENTA}{'='*40}\n")
 
     def _check_for_signal(self, current_price):
@@ -602,7 +604,7 @@ class GoldTradingBot:
             await asyncio.sleep(60)
             print(f"\n--- Live {self._format_symbol_for_display(self.symbol)} Update ({datetime.now().strftime('%H:%M:%S')}) ---")
             if self.active_signal:
-                signal = self.active_signal; color = Fore.GREEN if signal['type'] == "Buy" else Fore.RED
+                signal = self.active_signal; color = Fore.GREEN if "Buy" in signal['type'] else Fore.RED
                 print(f"{color}{self._format_symbol_for_display(self.symbol):<12} | HOLD | Entry: {signal['entry_price']:.5f} | TP: {signal['tp']:.5f} | SL: {signal['sl']:.5f} | Live: {self.latest_price:.5f}")
             else:
                 if self.latest_price > 0: print(f"{self._format_symbol_for_display(self.symbol):<12} | WAIT FOR SIGNAL | Live: {self.latest_price:.5f}")
