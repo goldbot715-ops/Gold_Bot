@@ -362,6 +362,21 @@ class GoldTradingBot:
         if tp_hit or sl_hit:
             result = f"{Fore.GREEN}TP HIT" if tp_hit else f"{Fore.RED}SL HIT"
             print(f"\n{Fore.MAGENTA}{'='*40}\n{Fore.CYAN}{self._format_symbol_for_display(self.symbol)} | {signal_data['type']} Closed\n{result} at {current_price:.5f}\n{Fore.MAGENTA}{'='*40}\n")
+            
+            # Telegram alert for closing trade
+            pnl_val = ((current_price - signal_data['entry_price']) / signal_data['entry_price']) * 100
+            if "Sell" in signal_data['type']: pnl_val = -pnl_val
+            
+            close_msg = (
+                f"<b>{result} - GOLD SIGNAL CLOSED</b>\n\n"
+                f"<b>Symbol:</b> {self._format_symbol_for_display(self.symbol)}\n"
+                f"<b>Type:</b> {signal_data['type']}\n"
+                f"<b>Entry:</b> {signal_data['entry_price']:.2f}\n"
+                f"<b>Close:</b> {current_price:.2f}\n"
+                f"<b>PnL:</b> {pnl_val:.2f}%"
+            )
+            asyncio.create_task(self._send_telegram_alert(close_msg))
+
             update_data = {"status": "TP_HIT" if tp_hit else "SL_HIT", "closed_at": datetime.now().isoformat(), "close_price": current_price, "close_reason": "TP_HIT" if tp_hit else "SL_HIT"}
             self._update_signal_in_firebase(signal_data.get('firebase_key'), update_data)
             self._save_to_history(signal_data, current_price, tp_hit)
