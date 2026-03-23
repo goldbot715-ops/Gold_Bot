@@ -78,6 +78,31 @@ class GoldTradingBot:
         self.last_ema_fast = 0.0
         self.last_ema_slow = 0.0
         self.last_firebase_live_price_update = datetime.now()
+        self._sync_active_signal_from_firebase()
+
+    def _sync_active_signal_from_firebase(self):
+        """
+        Startup par Firebase se check karta hai agar koi 'HOLD' status wala signal mojood hai.
+        Agar hai, to use self.active_signal mein load karta hai taake bot use monitor kar sake.
+        """
+        if not self.db:
+            return
+
+        try:
+            print(f"{Fore.CYAN}Syncing active signals from Firebase...")
+            signals = self.db.child('signals').child(self.symbol).get()
+            
+            if signals:
+                for key, data in signals.items():
+                    if data.get('status') == 'HOLD':
+                        data['firebase_key'] = key
+                        self.active_signal = data
+                        print(f"{Fore.GREEN}Resumed monitoring active signal: {data['type']} (Entry: {data['entry_price']})")
+                        return # Sirf ek active signal monitor karte hain
+            
+            print(f"{Fore.YELLOW}No active signals found in Firebase to resume.")
+        except Exception as e:
+            print(f"{Fore.RED}Error syncing signals from Firebase: {e}")
 
     def _format_symbol_for_display(self, symbol):
         return symbol[:3].upper() + '/' + symbol[3:].upper()
