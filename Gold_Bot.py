@@ -259,36 +259,60 @@ class GoldTradingBot:
             candle['low'] = min(candle['low'], tick_data['price'])
             candle['close'] = tick_data['price']
 
-    def _build_15m_candle(self):
+    def _build_higher_timeframe_candles(self):
         if self.symbol not in self.minute_candles: return
         last_minute_candle = self.minute_candles[self.symbol]
+        
+        # --- 15m Candle ---
         key_15m = f"{self.symbol}_15"
-        
         if key_15m not in self.ohlc_data: self.ohlc_data[key_15m] = pd.DataFrame()
-        
         if last_minute_candle['timestamp'].minute % 15 == 0 and \
            (key_15m not in self.last_candle_timestamps or self.last_candle_timestamps[key_15m] < last_minute_candle['timestamp']):
-            
             if self.last_15m_candle_time != last_minute_candle['timestamp']:
                 self.last_15m_candle_time = last_minute_candle['timestamp']
-                
                 if self.symbol in self.minute_candle_history and len(self.minute_candle_history[self.symbol]) >= 15:
                     minute_candles = self.minute_candle_history[self.symbol][-15:]
-                    fifteen_min_candle = {
-                        'timestamp': minute_candles[0]['timestamp'],
-                        'open': minute_candles[0]['open'],
-                        'high': max(c['high'] for c in minute_candles),
-                        'low': min(c['low'] for c in minute_candles),
-                        'close': minute_candles[-1]['close'],
-                        'volume': sum(c['volume'] for c in minute_candles)
-                    }
-                    new_candle_df = pd.DataFrame([fifteen_min_candle])
-                    self.ohlc_data[key_15m] = pd.concat([self.ohlc_data[key_15m], new_candle_df], ignore_index=True)
+                    new_candle = self._aggregate_candles(minute_candles)
+                    self.ohlc_data[key_15m] = pd.concat([self.ohlc_data[key_15m], pd.DataFrame([new_candle])], ignore_index=True)
                     if len(self.ohlc_data[key_15m]) > 500: self.ohlc_data[key_15m] = self.ohlc_data[key_15m].iloc[-500:]
                     self.last_candle_timestamps[key_15m] = last_minute_candle['timestamp']
-                    
+                    # Signal check trigger
                     if not self.active_signal:
-                        self._check_for_signal(fifteen_min_candle['close'])
+                        asyncio.create_task(self._check_for_signal(new_candle['close']))
+
+        # --- 1h Candle ---
+        key_1h = f"{self.symbol}_60"
+        if key_1h not in self.ohlc_data: self.ohlc_data[key_1h] = pd.DataFrame()
+        if last_minute_candle['timestamp'].minute == 0 and \
+           (key_1h not in self.last_candle_timestamps or self.last_candle_timestamps[key_1h] < last_minute_candle['timestamp']):
+            if self.symbol in self.minute_candle_history and len(self.minute_candle_history[self.symbol]) >= 60:
+                minute_candles = self.minute_candle_history[self.symbol][-60:]
+                new_candle = self._aggregate_candles(minute_candles)
+                self.ohlc_data[key_1h] = pd.concat([self.ohlc_data[key_1h], pd.DataFrame([new_candle])], ignore_index=True)
+                if len(self.ohlc_data[key_1h]) > 500: self.ohlc_data[key_1h] = self.ohlc_data[key_1h].iloc[-500:]
+                self.last_candle_timestamps[key_1h] = last_minute_candle['timestamp']
+
+        # --- 4h Candle ---
+        key_4h = f"{self.symbol}_240"
+        if key_4h not in self.ohlc_data: self.ohlc_data[key_4h] = pd.DataFrame()
+        if last_minute_candle['timestamp'].hour % 4 == 0 and last_minute_candle['timestamp'].minute == 0 and \
+           (key_4h not in self.last_candle_timestamps or self.last_candle_timestamps[key_4h] < last_minute_candle['timestamp']):
+            if self.symbol in self.minute_candle_history and len(self.minute_candle_history[self.symbol]) >= 240:
+                minute_candles = self.minute_candle_history[self.symbol][-240:]
+                new_candle = self._aggregate_candles(minute_candles)
+                self.ohlc_data[key_4h] = pd.concat([self.ohlc_data[key_4h], pd.DataFrame([new_candle])], ignore_index=True)
+                if len(self.ohlc_data[key_4h]) > 500: self.ohlc_data[key_4h] = self.ohlc_data[key_4h].iloc[-500:]
+                self.last_candle_timestamps[key_4h] = last_minute_candle['timestamp']
+
+    def _aggregate_candles(self, minute_candles):
+        return {
+            'timestamp': minute_candles[0]['timestamp'],
+            'open': minute_candles[0]['open'],
+            'high': max(c['high'] for c in minute_candles),
+            'low': min(c['low'] for c in minute_candles),
+            'close': minute_candles[-1]['close'],
+            'volume': sum(c['volume'] for c in minute_candles)
+        }
 
     async def _handle_websocket_messages(self):
         """
@@ -319,7 +343,7 @@ class GoldTradingBot:
                                         self._update_live_price_in_firebase(price)
                                         self.last_firebase_live_price_update = now
                                 
-                                self._build_15m_candle()
+                                self._build_higher_timeframe_candles()
                 except json.JSONDecodeError: 
                     pass
                 except Exception as e: 
@@ -504,59 +528,117 @@ class GoldTradingBot:
         )
         return df
 
-    def _generate_advanced_signal(self):
-        """Generates a signal using the Advanced Strategy (Trend EMA, MACD, RSI, ATR)."""
-        adv_cfg = self.config['advanced_strategy']
+    def _check_triple_ema_trend(self):
+        """
+        Checks if 4h, 1h, and 15m timeframes are aligned with Price > EMA 50 > EMA 200 (Bullish)
+        or Price < EMA 50 < EMA 200 (Bearish).
+        """
+        results = {}
+        for tf, minutes in [('4h', 240), ('1h', 60), ('15m', 15)]:
+            key = f"{self.symbol}_{minutes}"
+            if key not in self.ohlc_data or len(self.ohlc_data[key]) < 200:
+                results[tf] = 'NEUTRAL'
+                continue
+            
+            df = self.ohlc_data[key].copy()
+            df['ema50'] = ta.trend.ema_indicator(df['close'], window=50)
+            df['ema200'] = ta.trend.ema_indicator(df['close'], window=200)
+            
+            last = df.iloc[-1]
+            if last['close'] > last['ema50'] > last['ema200']:
+                results[tf] = 'BULLISH'
+            elif last['close'] < last['ema50'] < last['ema200']:
+                results[tf] = 'BEARISH'
+            else:
+                results[tf] = 'NEUTRAL'
+        
+        if results['4h'] == results['1h'] == results['15m'] == 'BULLISH':
+            return 'BULLISH'
+        elif results['4h'] == results['1h'] == results['15m'] == 'BEARISH':
+            return 'BEARISH'
+        return 'NEUTRAL'
 
-        # 1. Trend Confirmation (HTF - 4H)
-        # Gold HTF aggregation is not explicitly shown, but we can assume it's available or can be fetched
-        # For Gold_Bot, it seems to handle 15m primarily. Let's adapt to use what's available.
-        key_15m = f"{self.symbol}_15"
-        if key_15m not in self.ohlc_data or self.ohlc_data[key_15m] is None:
+    def _generate_advanced_signal(self):
+        """
+        Advanced Strategy (MACD + RSI + ATR) with Triple EMA Trend and ChoCh + BOS logic.
+        """
+        # 1. Triple EMA Trend Alignment (4h, 1h, 15m)
+        trend = self._check_triple_ema_trend()
+        if trend == 'NEUTRAL':
             return None
 
+        # 2. Market Structure (ChoCh then BOS) on 15m
+        key_15m = f"{self.symbol}_15"
         df_15m = self.ohlc_data[key_15m].copy()
-        
-        # Trend EMA (Long-term)
-        df_15m['ema_trend'] = ta.trend.ema_indicator(df_15m['close'], window=adv_cfg['trend_ema_period'])
         df_15m = self._add_advanced_indicators(df_15m)
         
-        if len(df_15m) < 3:
-            return None
+        # Identify Swing Points
+        lookback = 10
+        df_15m['sh'] = df_15m['high'].rolling(window=lookback, center=True).max()
+        df_15m['sl'] = df_15m['low'].rolling(window=lookback, center=True).min()
+        
+        swings = df_15m.dropna(subset=['sh', 'sl']).tail(10)
+        if len(swings) < 4: return None
 
-        last = df_15m.iloc[-1]
-        prev = df_15m.iloc[-2]
+        last_close = df_15m['close'].iloc[-1]
+        prev_close = df_15m['close'].iloc[-2]
+        adv_cfg = self.config['advanced_strategy']
 
-        is_uptrend = (last['close'] > last['ema_trend'])
-        is_downtrend = (last['close'] < last['ema_trend'])
+        if trend == 'BULLISH':
+            # --- Bullish Logic: ChoCh then BOS ---
+            # 1. Find last two distinct swing highs
+            sh_points = df_15m['sh'].dropna().unique()
+            if len(sh_points) < 2: return None
+            
+            last_sh = sh_points[-1]
+            prev_sh = sh_points[-2]
 
-        # --- Buy Signal Conditions ---
-        if is_uptrend:
-            macd_crossed_up = prev['macd_val'] < prev['macd_sig'] and last['macd_val'] > last['macd_sig']
-            rsi_is_ok = last['rsi_val'] > adv_cfg['rsi_buy_threshold']
-            if macd_crossed_up and rsi_is_ok:
-                sl, tp = self._calculate_atr_sl_tp("Buy", last['close'], last['atr_val'])
-                return {
-                    "type": "Advanced Buy",
-                    "condition": f"Uptrend (200 EMA) + MACD Crossover",
-                    "entry_price": last['close'],
-                    "sl": sl,
-                    "tp": tp
-                }
+            # ChoCh: Close > prev_sh (First break)
+            # BOS: Close > last_sh (Second break in same direction)
+            is_choch = any(df_15m['close'].tail(20) > prev_sh)
+            is_boss = last_close > last_sh and prev_close <= last_sh
 
-        # --- Sell Signal Conditions ---
-        if is_downtrend:
-            macd_crossed_down = prev['macd_val'] > prev['macd_sig'] and last['macd_val'] < last['macd_sig']
-            rsi_is_ok = last['rsi_val'] < adv_cfg['rsi_sell_threshold']
-            if macd_crossed_down and rsi_is_ok:
-                sl, tp = self._calculate_atr_sl_tp("Sell", last['close'], last['atr_val'])
-                return {
-                    "type": "Advanced Sell",
-                    "condition": f"Downtrend (200 EMA) + MACD Crossover",
-                    "entry_price": last['close'],
-                    "sl": sl,
-                    "tp": tp
-                }
+            if is_choch and is_boss:
+                macd_up = df_15m['macd_val'].iloc[-1] > df_15m['macd_sig'].iloc[-1]
+                rsi_ok = df_15m['rsi_val'].iloc[-1] > adv_cfg['rsi_buy_threshold']
+                
+                if macd_up and rsi_ok:
+                    sl, tp = self._calculate_atr_sl_tp("Buy", last_close, df_15m['atr_val'].iloc[-1])
+                    return {
+                        "type": "Advanced Buy",
+                        "condition": "Triple EMA + ChoCh + BOS + MACD/RSI",
+                        "entry_price": last_close,
+                        "sl": sl,
+                        "tp": tp
+                    }
+
+        elif trend == 'BEARISH':
+            # --- Bearish Logic: ChoCh then BOS ---
+            # 1. Find last two distinct swing lows
+            sl_points = df_15m['sl'].dropna().unique()
+            if len(sl_points) < 2: return None
+            
+            last_sl = sl_points[-1]
+            prev_sl = sl_points[-2]
+
+            # ChoCh: Close < prev_sl (First break)
+            # BOS: Close < last_sl (Second break in same direction)
+            is_choch = any(df_15m['close'].tail(20) < prev_sl)
+            is_boss = last_close < last_sl and prev_close >= last_sl
+
+            if is_choch and is_boss:
+                macd_down = df_15m['macd_val'].iloc[-1] < df_15m['macd_sig'].iloc[-1]
+                rsi_ok = df_15m['rsi_val'].iloc[-1] < adv_cfg['rsi_sell_threshold']
+                
+                if macd_down and rsi_ok:
+                    sl, tp = self._calculate_atr_sl_tp("Sell", last_close, df_15m['atr_val'].iloc[-1])
+                    return {
+                        "type": "Advanced Sell",
+                        "condition": "Triple EMA + ChoCh + BOS + MACD/RSI",
+                        "entry_price": last_close,
+                        "sl": sl,
+                        "tp": tp
+                    }
 
         return None
 
